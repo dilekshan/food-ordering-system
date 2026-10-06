@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+# Node
+node_modules/
+dist/
+# Env
+backend/.env
+frontend/.env
+.DS_Store
+frontend/test-results/
+frontend/playwright-report/
+backend/uploads/

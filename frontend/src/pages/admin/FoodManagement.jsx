@@ -53,7 +53,7 @@ export default function FoodManagement() {
     if (!/\.(jpe?g|png|webp)$/i.test(selected.name) || !["image/jpeg", "image/png", "image/webp"].includes(selected.type)) {
       setFormError("Choose a JPG, JPEG, PNG or WEBP image"); event.target.value = ""; return;
     }
-    if (selected.size > 5 * 1024 * 1024) { setFormError("Image must be 5 MB or smaller"); event.target.value = ""; return; }
+    if (selected.size > 4 * 1024 * 1024) { setFormError("Image must be 4 MB or smaller"); event.target.value = ""; return; }
     setFile(selected);
   };
   const save = async (event) => {
@@ -112,7 +112,7 @@ export default function FoodManagement() {
             <label className="check"><input type="checkbox" checked={editing.is_available} onChange={(e) => set("is_available", e.target.checked)} />Available</label>
           </div><div className="admin-form image-panel">
             <label htmlFor="food-image">Food Image</label><input id="food-image" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" onChange={chooseImage} />
-            <small className="muted">JPG, JPEG, PNG or WEBP. Up to 5 MB and 16 megapixels.</small>
+            <small className="muted">JPG, JPEG, PNG or WEBP. Up to 4 MB and 16 megapixels.</small>
             <FoodImage src={preview || editing.image_url} alt="Food image preview" className="image-preview" />
             <small>{file ? file.name : editing.image_url ? "Current image — kept unless you choose a replacement." : "No image selected. A placeholder will be displayed."}</small>
           </div></div>

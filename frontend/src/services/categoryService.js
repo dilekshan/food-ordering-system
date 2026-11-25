@@ -7,6 +7,6 @@ export const deleteCategory = (id) => api.delete(`/categories/${id}`);
 export const uploadCategoryImage = (file) => {
   const form = new FormData();
   form.append("file", file);
-  return api.post("/categories/images", form).then((r) => r.data);
+  return api.post("/categories/images", form, { timeout: 60000 }).then((r) => r.data);
 };
-export const deleteCategoryImage = (filename) => api.delete(`/categories/images/${encodeURIComponent(filename)}`);
+export const deleteCategoryImage = (url) => api.delete("/categories/images", { params: { image_url: url } });

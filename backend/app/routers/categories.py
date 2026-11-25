@@ -19,16 +19,14 @@ async def upload_category_image(file: UploadFile = File(...)):
     return await image_service.save_image(file)
 
 
+@router.delete("/images", status_code=204, dependencies=[Depends(admin_user)])
+def discard_uploaded_image(image_url: str, db: Session = Depends(get_db)):
+    image_service.discard_image(db, image_url)
+
+
 @router.delete("/images/{filename}", status_code=204, dependencies=[Depends(admin_user)])
-def discard_category_image(filename: str, db: Session = Depends(get_db)):
-    url = image_service.URL_PREFIX + filename
-    if not image_service.managed_path(url):
-        raise HTTPException(404, "Image not found")
-    if db.query(Category).filter(Category.image_url == url).first():
-        raise HTTPException(409, "Image is in use")
-    if db.query(Food).filter(Food.image_url == url).first():
-        raise HTTPException(409, "Image is in use")
-    image_service.remove_unused_image(db, url)
+def discard_legacy_image(filename: str, db: Session = Depends(get_db)):
+    image_service.discard_image(db, image_service.URL_PREFIX + filename)
 
 
 @router.get("/", response_model=List[CategoryOut])

@@ -1,8 +1,11 @@
 import axios from "axios";
 import { useSyncExternalStore } from "react";
 
+const configuredBase = (import.meta.env.VITE_API_URL || "/api").trim().replace(/\/+$/, "");
+const apiBase = configuredBase.endsWith("/api") ? configuredBase : `${configuredBase}/api`;
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "/api",
+  baseURL: apiBase,
   timeout: 15000,
 });
 
@@ -59,6 +62,6 @@ export default api;
 
 export const imageUrl = (url) => {
   if (!url || !url.startsWith("/api/uploads/")) return url;
-  const base = import.meta.env.VITE_API_URL || "/api";
+  const base = apiBase;
   return /^https?:\/\//.test(base) ? new URL(url, base).href : url;
 };

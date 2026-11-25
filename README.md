@@ -34,7 +34,7 @@ Open http://localhost:5173
 
 ## Notes
 - Prices are always read from the database when an order is placed.
-- API requests use signed bearer sessions that expire after 24 hours. Set a long random `AUTH_SECRET` in `backend/.env` to preserve sessions across server restarts and share sessions between workers; without it a temporary process-specific secret is used. Orders are restricted to their authenticated owner and management APIs require an admin session.
+- API requests use signed bearer sessions that expire after 24 hours. Set a long random `AUTH_SECRET` in `backend/.env` to preserve sessions across server restarts and share sessions between workers; `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `AUTH_SECRET` are required; startup fails if any is missing or blank. Orders are restricted to their authenticated owner and management APIs require an admin session.
 - Food images use an optional image URL; a placeholder icon is shown otherwise.
 
 ## Connection and verification
@@ -87,3 +87,57 @@ cart operations, checkout, order status, customer isolation, and logout.
 It reads MySQL directly to verify customer fields, password hashing, delivery
 address, totals, and both order-item records, then removes only its test fixtures.
 Results are written to `frontend/test-results/results.json`.
+
+
+## Vercel deployment (two projects)
+
+1. Create a backend Vercel project with Root Directory `backend` and the FastAPI
+   framework. `index.py` exports the ASGI app; use the default Python dependency
+   install and no custom build/output directory. Include the existing
+   `certs/isrgrootx1.pem`. Never upload `.env` or `.venv`.
+2. Copy the existing `DATABASE_URL`, `CLOUDINARY_CLOUD_NAME`,
+   `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `ADMIN_EMAIL`, and
+   `ADMIN_PASSWORD` into backend environment settings. Reuse the existing
+   `AUTH_SECRET`; if it was never set, generate a persistent random secret.
+   Set `INIT_DB=false`. Vercel requires `AUTH_SECRET` so sessions work across
+   instances. Existing TiDB certificate and hostname verification stay enabled.
+3. Create a frontend project with Root Directory `frontend`, framework Vite,
+   build `npm run build`, and output directory `dist`. Set
+   `VITE_API_URL=https://<backend-domain>/api` before building. The existing
+   frontend rewrite handles React routes.
+4. Set backend `CORS_ORIGINS` to the exact frontend HTTPS origin. Multiple
+   production/preview origins can be comma-separated; do not allow all Vercel
+   subdomains. Apply the variables to the intended environments. Rebuild the
+   frontend when changing `VITE_API_URL`.
+5. When ready to deploy, deploy both projects and verify `/api/health`, login,
+   food/category uploads, replacement, discard, and direct React route refresh.
+   Backend deployment protection must allow requests from the browser.
+
+Uploads are validated and re-encoded in memory before Cloudinary storage.
+The 4 MiB image limit leaves multipart overhead below Vercel's default 4.5 MB
+request limit; no paid larger-payload feature is needed. Format, MIME and
+16-megapixel validation remain enforced. Explicit discard reports provider
+failures; cleanup after a committed record update logs failures without undoing
+that successful update. Abrupt browser closure/network failures can leave an
+unused asset; cleanup is best effort and never deletes referenced assets.
+
+Legacy `/api/uploads/foods/` files are not durable on Vercel and are excluded
+from the deployment. If existing records use those paths or Railway URLs,
+their assets and references require a separately authorized data migration.
+This preparation does not rewrite existing records or run production DDL.
+
+Verification from `backend`:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_integration.py -v
+.\.venv\Scripts\python.exe -m tests.cloudinary_smoke
+```
+
+Integration tests use temporary SQLite and mocked Cloudinary. The explicit
+Cloudinary smoke test uploads one unique image to the configured account and
+then deletes that image, without database writes. Run `npm.cmd run build` from
+`frontend`. Existing live browser tests write fixtures to the configured DB;
+they are not part of this no-record-change verification.
+
+References: [FastAPI on Vercel](https://vercel.com/docs/frameworks/backend/fastapi)
+and [request limits](https://vercel.com/docs/errors/function_payload_too_large).

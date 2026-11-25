@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage, imageUrl } from "../../services/api";
 import { createCategory, deleteCategory, deleteCategoryImage, getCategories, updateCategory, uploadCategoryImage } from "../../services/categoryService";
 
@@ -8,6 +8,16 @@ export default function CategoryManagement() {
   const [form, setForm] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
   const [pendingImage, setPendingImage] = useState(null);
+  const pendingRef = useRef(null);
+  const mounted = useRef(true);
+  useEffect(() => { pendingRef.current = pendingImage; }, [pendingImage]);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (pendingRef.current) deleteCategoryImage(pendingRef.current).catch(() => {});
+    };
+  }, []);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -34,13 +44,18 @@ export default function CategoryManagement() {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file || busy) return;
+    if (!/\.(jpe?g|png|webp)$/i.test(file.name) || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setError("Choose a JPG, JPEG, PNG or WEBP image"); return;
+    }
+    if (file.size > 4 * 1024 * 1024) { setError("Image must be 4 MB or smaller"); return; }
     setBusy(true); setError(""); setMessage("");
     try {
-      if (pendingImage) {
-        await deleteCategoryImage(pendingImage.split("/").pop());
-        setPendingImage(null);
-      }
       const uploaded = await uploadCategoryImage(file);
+      if (!mounted.current) { await deleteCategoryImage(uploaded.image_url); return; }
+      if (pendingImage) {
+        try { await deleteCategoryImage(pendingImage); }
+        catch (err) { await deleteCategoryImage(uploaded.image_url).catch(() => {}); throw err; }
+      }
       setForm((current) => ({ ...current, image_url: uploaded.image_url }));
       setPendingImage(uploaded.image_url);
     } catch (err) { setError(errorMessage(err)); }
@@ -50,7 +65,7 @@ export default function CategoryManagement() {
     if (busy) return;
     setBusy(true); setError("");
     try {
-      if (pendingImage) await deleteCategoryImage(pendingImage.split("/").pop());
+      if (pendingImage) await deleteCategoryImage(pendingImage);
       setPendingImage(null);
       setForm((current) => ({ ...current, image_url: "" }));
     } catch (err) { setError(errorMessage(err)); }
@@ -60,7 +75,7 @@ export default function CategoryManagement() {
     if (busy) return;
     setBusy(true); setError("");
     try {
-      if (pendingImage) await deleteCategoryImage(pendingImage.split("/").pop());
+      if (pendingImage) await deleteCategoryImage(pendingImage);
       setPendingImage(null); setEditId(null); setForm(EMPTY); setError("");
     } catch (err) { setError(errorMessage(err)); }
     finally { setBusy(false); }
@@ -96,7 +111,7 @@ export default function CategoryManagement() {
       <thead><tr><th>ID</th><th>Image</th><th>Name</th><th>Description</th><th>Actions</th></tr></thead>
       <tbody>{categories.map((category) => <tr key={category.id}>
         <td>{category.id}</td><td>{category.image_url ? <img className="thumb" src={imageUrl(category.image_url)} alt="" /> : "—"}</td><td>{category.name}</td><td className="description-cell">{category.description || "—"}</td>
-        <td><div className="table-actions"><button className="btn blue" disabled={busy} onClick={() => { setEditId(category.id); setPendingImage(null); setForm({ name: category.name, description: category.description || "", image_url: category.image_url || "" }); setError(""); setMessage(""); }}>Edit</button>
+        <td><div className="table-actions"><button className="btn blue" disabled={busy} onClick={async () => { if (pendingImage) { try { await deleteCategoryImage(pendingImage); } catch (err) { setError(errorMessage(err)); return; } } setEditId(category.id); setPendingImage(null); setForm({ name: category.name, description: category.description || "", image_url: category.image_url || "" }); setError(""); setMessage(""); }}>Edit</button>
           <button className="btn danger" disabled={busy} onClick={() => remove(category.id)}>Delete</button></div></td>
       </tr>)}</tbody></table>{!categories.length && !error && <p className="empty">No categories yet.</p>}</div>}
   </>;

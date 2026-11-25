@@ -3,8 +3,6 @@ import base64
 import hashlib
 import hmac
 import json
-import os
-import secrets
 import time
 
 from fastapi import Depends, HTTPException
@@ -14,7 +12,9 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.customer import Customer
 
-SECRET = os.getenv("AUTH_SECRET") or secrets.token_hex(32)
+from app.config import settings
+
+SECRET = settings.AUTH_SECRET
 bearer = HTTPBearer(auto_error=False)
 
 

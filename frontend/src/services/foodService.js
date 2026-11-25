@@ -8,6 +8,6 @@ export const deleteFood = (id) => api.delete(`/foods/${id}`);
 export const uploadFoodImage = (file) => {
   const data = new FormData();
   data.append("file", file);
-  return api.post("/foods/images", data).then((response) => response.data.image_url);
+  return api.post("/foods/images", data, { timeout: 60000 }).then((response) => response.data.image_url);
 };
-export const discardFoodImage = (url) => api.delete(`/foods/images/${url.split("/").pop()}`);
+export const discardFoodImage = (url) => api.delete("/foods/images", { params: { image_url: url } });

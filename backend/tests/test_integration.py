@@ -1,10 +1,17 @@
 import os
+import secrets
 import tempfile
 import unittest
 from io import BytesIO
+from unittest.mock import patch
 from PIL import Image
 
+os.environ["ADMIN_EMAIL"] = "admin-integration@example.test"
+os.environ["ADMIN_PASSWORD"] = secrets.token_urlsafe(32)
+os.environ["AUTH_SECRET"] = secrets.token_hex(32)
+
 temporary = tempfile.TemporaryDirectory()
+os.environ["INIT_DB"] = "true"
 os.environ["DATABASE_URL"] = "sqlite:///" + temporary.name.replace("\\", "/") + "/test.db"
 from fastapi.testclient import TestClient
 from app.main import app
@@ -19,6 +26,20 @@ def tearDownModule():
 
 class IntegrationTest(unittest.TestCase):
     def test_admin_images_and_validation(self):
+        assets = set()
+        def upload(content, **options):
+            url = f"https://res.cloudinary.com/{settings.CLOUDINARY_CLOUD_NAME}/image/upload/v1/{options['public_id']}.{options['format']}"
+            assets.add(url)
+            return {"secure_url": url}
+        def destroy(public_id, **options):
+            assets.difference_update([url for url in assets if f"/{public_id}." in url])
+            return {"result": "ok"}
+        upload_mock = patch("app.services.image_service.cloudinary.uploader.upload", side_effect=upload)
+        destroy_mock = patch("app.services.image_service.cloudinary.uploader.destroy", side_effect=destroy)
+        cloud = patch.object(settings, "CLOUDINARY_CLOUD_NAME", "test-cloud")
+        for mock in (upload_mock, destroy_mock, cloud):
+            mock.start()
+            self.addCleanup(mock.stop)
         with TestClient(app) as client:
             self.assertEqual(client.post("/api/foods/images", files={"file": ("x.png", b"bad", "image/png")}).status_code, 401)
             self.assertEqual(client.post("/api/categories/images", files={"file": ("x.png", b"bad", "image/png")}).status_code, 401)
@@ -31,9 +52,14 @@ class IntegrationTest(unittest.TestCase):
             for name, content, mime, expected in [
                 ("x.svg", b"<svg/>", "image/svg+xml", 422),
                 ("x.png", b"not an image", "image/png", 422),
-                ("x.png", b"a" * (5 * 1024 * 1024 + 1), "image/png", 413),
+                ("x.png", b"a" * (4 * 1024 * 1024 + 1), "image/png", 413),
             ]:
                 self.assertEqual(client.post("/api/foods/images", files={"file": (name, content, mime)}).status_code, expected)
+            self.assertEqual(client.delete("/api/foods/images", params={"image_url": "https://example.com/image.png"}).status_code, 404)
+            with patch("app.services.image_service.cloudinary.uploader.upload", side_effect=RuntimeError("provider unavailable")):
+                data = BytesIO()
+                Image.new("RGB", (4, 4)).save(data, "PNG")
+                self.assertEqual(client.post("/api/foods/images", files={"file": ("x.png", data.getvalue(), "image/png")}).status_code, 502)
             uploaded = []
             for extension, fmt, mime in [("jpg", "JPEG", "image/jpeg"), ("jpeg", "JPEG", "image/jpeg"), ("png", "PNG", "image/png"), ("webp", "WEBP", "image/webp")]:
                 data = BytesIO()
@@ -41,7 +67,7 @@ class IntegrationTest(unittest.TestCase):
                 result = client.post("/api/foods/images", files={"file": (f"food.{extension}", data.getvalue(), mime)})
                 self.assertEqual(result.status_code, 201, result.text)
                 uploaded.append(result.json()["image_url"])
-                self.assertEqual(client.get(uploaded[-1]).status_code, 200)
+                self.assertIn(uploaded[-1], assets)
             category = client.post("/api/categories/", json={"name": "Image test", "description": "Category details"}).json()
             self.assertEqual(category["description"], "Category details")
             category_data = BytesIO()
@@ -52,7 +78,7 @@ class IntegrationTest(unittest.TestCase):
             }).json()
             self.assertEqual(category["image_url"], category_image)
             self.assertEqual(client.get("/api/categories/").json()[0]["image_url"], category_image)
-            self.assertEqual(client.delete(f"/api/foods/images/{category_image.split('/')[-1]}").status_code, 409)
+            self.assertEqual(client.delete("/api/foods/images", params={"image_url": category_image}).status_code, 409)
             payload = {"name": "Image food", "price": 12.50, "category_id": category["id"], "image_url": uploaded[0]}
             self.assertEqual(client.post("/api/foods/", json={**payload, "price": 0}).status_code, 422)
             self.assertEqual(client.post("/api/foods/", json={**payload, "price": 0.001}).status_code, 422)
@@ -62,19 +88,26 @@ class IntegrationTest(unittest.TestCase):
             self.assertEqual(client.post("/api/foods/", json={**payload, "category_id": 99999999}).status_code, 400)
             food = client.post("/api/foods/", json=payload).json()
             shared = client.post("/api/foods/", json={**payload, "name": "Shared image food"}).json()
-            filename = uploaded[0].split("/")[-1]
-            self.assertEqual(client.delete(f"/api/foods/images/{filename}").status_code, 409)
+            alternate = uploaded[0].replace("/v1/", "/v2/")
+            variant = client.post("/api/foods/", json={**payload, "name": "Version reference", "image_url": alternate}).json()
+            self.assertEqual(client.delete("/api/categories/images", params={"image_url": uploaded[0]}).status_code, 409)
+            self.assertEqual(client.delete(f"/api/foods/{variant['id']}").status_code, 204)
+            self.assertIn(uploaded[0], assets)
+            self.assertEqual(client.delete("/api/foods/images", params={"image_url": uploaded[0]}).status_code, 409)
             self.assertEqual(client.put(f"/api/foods/{food['id']}", json={"image_url": uploaded[1]}).status_code, 200)
-            self.assertEqual(client.get(uploaded[0]).status_code, 200)
+            self.assertIn(uploaded[0], assets)
             self.assertEqual(client.delete(f"/api/foods/{shared['id']}").status_code, 204)
-            self.assertEqual(client.get(uploaded[0]).status_code, 404)
+            self.assertNotIn(uploaded[0], assets)
             self.assertEqual(client.delete(f"/api/foods/{food['id']}").status_code, 204)
-            self.assertEqual(client.get(uploaded[1]).status_code, 404)
+            self.assertNotIn(uploaded[1], assets)
+            with patch("app.services.image_service.cloudinary.uploader.destroy", return_value={"result": "error"}):
+                self.assertEqual(client.delete("/api/foods/images", params={"image_url": uploaded[2]}).status_code, 502)
+                self.assertIn(uploaded[2], assets)
             for url in uploaded[2:]:
-                self.assertEqual(client.delete("/api/foods/images/" + url.split("/")[-1]).status_code, 204)
-                self.assertEqual(client.get(url).status_code, 404)
+                self.assertEqual(client.delete("/api/foods/images", params={"image_url": url}).status_code, 204)
+                self.assertNotIn(url, assets)
             self.assertEqual(client.delete(f"/api/categories/{category['id']}").status_code, 204)
-            self.assertEqual(client.get(category_image).status_code, 404)
+            self.assertNotIn(category_image, assets)
 
     def test_customer_and_admin_workflow(self):
         with TestClient(app) as client:
